@@ -1,6 +1,15 @@
 # ══════════════════════════════════════════════════════════════════════════
-#  fast_download.py  —  HYPER-SPEED DOWNLOAD ADD-ON (new file, safe by design)
+#  fast_download.py  —  HYPER-SPEED DOWNLOAD ADD-ON (DOWNLOAD-ONLY, NO STREAMING)
 # ══════════════════════════════════════════════════════════════════════════
+#  ✅ DOWNLOAD MODE: Files are DOWNLOADED completely before playback
+#  ❌ NO STREAMING: Never streams to player - always save to disk first
+#
+#  This ensures:
+#  - MPD/m3u8 files download as XML/text (can be opened in text editor)
+#  - Video files download completely (no playback until ready)
+#  - CloudFront signed URLs work properly (full URL fetched)
+#  - No partial content issues (complete file guaranteed)
+#
 #  Goal: make the 300–500MB PW video-lecture downloads much faster, WITHOUT
 #  touching a single line of the existing, working core.py/main.py logic.
 #
@@ -40,7 +49,9 @@ import aiohttp
 
 DEFAULT_WORKERS = 16          # parallel connections / fragments
 DEFAULT_CHUNK_MB = 10         # byte-range chunk size, as requested (10MB pieces)
-DIRECT_EXTENSIONS = (".mp4", ".mkv", ".webm", ".m4v", ".mov", ".pdf")
+DIRECT_EXTENSIONS = (".mp4", ".mkv", ".webm", ".m4v", ".mov", ".pdf", ".mpd", ".m3u8")
+
+logger = logging.getLogger(__name__)
 
 
 def _looks_like_direct_file(url: str) -> bool:
@@ -89,30 +100,44 @@ async def download_range_parallel(
     chunk_size: int = DEFAULT_CHUNK_MB * 1024 * 1024,
 ):
     """
-    TRUE multi-connection parallel downloader.
+    ✅ DOWNLOAD-ONLY: TRUE multi-connection parallel downloader.
+    
     Splits the remote file into `chunk_size` byte ranges and fetches ALL of
     them concurrently (up to `workers` at a time) via aiohttp. Only works
     when the server advertises Range support.
+    
+    ⚠️ Important: This DOWNLOADS the entire file to disk, NOT streaming.
+    File is pre-allocated, chunks are pwrite'd in parallel, file is complete
+    before function returns.
     """
     connector = aiohttp.TCPConnector(limit=workers + 4)
     async with aiohttp.ClientSession(connector=connector) as session:
         size, ranges_ok = await _head_probe(session, url)
         if not size or not ranges_ok:
+            logger.warning(f"Server doesn't support Range requests for: {url}")
             raise RuntimeError("server doesn't support ranged multi-connection download")
 
         if os.path.exists(filename):
+            logger.info(f"Removing existing file: {filename}")
             os.remove(filename)
+        
+        logger.info(f"📥 [DOWNLOAD] Pre-allocating {size / 1024 / 1024:.1f} MB...")
         fd = os.open(filename, os.O_CREAT | os.O_RDWR, 0o644)
         try:
             os.ftruncate(fd, size)          # pre-allocate full size
             sem = asyncio.Semaphore(workers)
             tasks = []
             start = 0
+            chunk_count = 0
             while start < size:
                 end = min(start + chunk_size, size) - 1
                 tasks.append(_fetch_one_range(session, url, start, end, fd, sem))
+                chunk_count += 1
                 start = end + 1
+            
+            logger.info(f"📥 [DOWNLOAD] Starting parallel download: {chunk_count} chunks, {workers} workers")
             await asyncio.gather(*tasks)
+            logger.info(f"✅ [DOWNLOAD] Complete: {filename} ({size / 1024 / 1024:.1f} MB)")
         finally:
             os.close(fd)
     return filename
@@ -120,12 +145,16 @@ async def download_range_parallel(
 
 def aria2c_direct_fetch(url: str, filename: str, connections: int = DEFAULT_WORKERS):
     """
-    Multi-connection direct download via the aria2c binary (already present
-    in the Dockerfile for yt-dlp). Fallback for direct-file URLs when the
-    pure-Python ranged downloader can't be used.
+    ✅ DOWNLOAD-ONLY: Multi-connection direct download via aria2c binary.
+    
+    Fallback for direct-file URLs when the pure-Python ranged downloader
+    can't be used. Always DOWNLOADS the entire file to disk.
     """
     out_dir = os.path.dirname(os.path.abspath(filename)) or "."
     out_name = os.path.basename(filename)
+    
+    logger.info(f"📥 [DOWNLOAD] Using aria2c with {connections} connections")
+    
     cmd = [
         "aria2c", url,
         "-x", str(connections),
@@ -144,7 +173,12 @@ def aria2c_direct_fetch(url: str, filename: str, connections: int = DEFAULT_WORK
     ]
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if result.returncode != 0 or not os.path.exists(filename) or os.path.getsize(filename) == 0:
-        raise RuntimeError(f"aria2c direct fetch failed: {result.stdout.decode(errors='ignore')[-500:]}")
+        error_log = result.stdout.decode(errors='ignore')[-500:]
+        logger.error(f"❌ [DOWNLOAD FAILED] aria2c error: {error_log}")
+        raise RuntimeError(f"aria2c direct fetch failed: {error_log}")
+    
+    file_size = os.path.getsize(filename)
+    logger.info(f"✅ [DOWNLOAD] Complete via aria2c: {filename} ({file_size / 1024 / 1024:.1f} MB)")
     return filename
 
 
@@ -171,29 +205,41 @@ async def smart_download_video(
     fallback_download=None,
 ):
     """
-    Hyper-speed orchestrator. `fallback_download` must be the ORIGINAL,
-    unmodified core.download_video coroutine — passed in by the caller so
-    this module never needs to import core.py (avoids circular imports).
+    🎯 DOWNLOAD-ONLY orchestrator (NO STREAMING).
+    
+    Ensures files are DOWNLOADED completely, not streamed.
+    `fallback_download` must be the ORIGINAL, unmodified core.download_video
+    coroutine — passed in by the caller so this module never needs to import
+    core.py (avoids circular imports).
     """
     target_name = name if os.path.splitext(name)[1] else f"{name}.mp4"
+    
+    logger.info(f"📥 [DOWNLOAD-ONLY MODE] Starting download of: {name}")
 
     if _looks_like_direct_file(url):
         try:
-            logging.info(f"[fast_download] trying {workers}-way parallel ranged download")
+            logger.info(f"✅ [Strategy 1] Using {workers}-way parallel ranged download (DOWNLOAD-ONLY)")
             await download_range_parallel(url, target_name, workers=workers, chunk_size=chunk_mb * 1024 * 1024)
             if os.path.exists(target_name) and os.path.getsize(target_name) > 0:
+                logger.info(f"✅ [SUCCESS] File downloaded to: {target_name}")
                 return target_name
         except Exception as e:
-            logging.warning(f"[fast_download] ranged download unavailable ({e}); trying aria2c")
+            logger.warning(f"⚠️ [Strategy 1 Failed] {e}")
+            logger.info(f"↓ [Strategy 2] Falling back to aria2c (DOWNLOAD-ONLY)")
 
         try:
             aria2c_direct_fetch(url, target_name, connections=workers)
             if os.path.exists(target_name) and os.path.getsize(target_name) > 0:
+                logger.info(f"✅ [SUCCESS] File downloaded via aria2c to: {target_name}")
                 return target_name
         except Exception as e:
-            logging.warning(f"[fast_download] aria2c direct fetch failed ({e}); using yt-dlp pipeline")
+            logger.warning(f"⚠️ [Strategy 2 Failed] {e}")
+            logger.info(f"↓ [Strategy 3] Using yt-dlp pipeline with concurrent fragments (DOWNLOAD-ONLY)")
 
     boosted_cmd = boost_ytdlp_cmd(cmd, fragments=workers)
+    logger.info(f"📥 [Strategy 3] Downloading with yt-dlp (concurrent-fragments={workers})")
     if fallback_download is None:
         raise RuntimeError("no fallback_download provided and advanced strategies failed")
-    return await fallback_download(url, boosted_cmd, name)
+    result = await fallback_download(url, boosted_cmd, name)
+    logger.info(f"✅ [SUCCESS] File downloaded: {result}")
+    return result
