@@ -52,7 +52,7 @@ def _save_api(api1: str, api2: str):
         pass
 
 _saved_api1, _saved_api2 = _load_api()
-_default_api = "https://anonymouspwplayeer-2038df9c1dbd.herokuapp.com/pw"
+_default_api = "https://ankitshakyaxapi.vercel.app/download?mpd_url="
 PWAPI1 = _saved_api1 or os.environ.get("PWAPI1", _default_api)
 PWAPI2 = _saved_api2 or os.environ.get("PWAPI2", _default_api)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -270,7 +270,7 @@ bot = Client(
     bot_token=BOT_TOKEN
 )
 
-my_name = "MS BRO"
+my_name = "💜"
 
 cookies_file_path = os.getenv("COOKIES_FILE_PATH", "/modules/youtube_cookies.txt")
 
@@ -1084,7 +1084,7 @@ async def txt_handler(bot: Client, m: Message):
              #id =  url.split("/")[-2]
              #url = f"https://anonymouspwplayerrr-31d6706c7a3b.herokuapp.com/pw?url={url}?token={raw_text4}"
             #url = f"https://madxapi-d0cbf6ac738c.herokuapp.com/{id}/master.m3u8?token={raw_text4}"
-            elif"master.mpd" in url or "sec1.pw.live" in url or "parentId" in url:
+            elif"childId" in url or "sec1.pw.live" in url or "parentId" in url:
              url = f"{PWAPI1}?url={url}&token={raw_text4}"
                      
                                                          
@@ -1112,8 +1112,8 @@ async def txt_handler(bot: Client, m: Message):
 
             try:  
                 
-                cc = f'**[{str(count).zfill(3)}.]📝Titel: {name1} {res}-MS Bro.mkv\n\n📥 Upload By♠:\n{CR}**'
-                cc1 = f'**[{str(count).zfill(3)}.]📝Titel: {name1}-MS BRO.pdf\n\n📥 Upload By♠:\n{CR}**'
+                cc = f'**[{str(count).zfill(3)}.]📝Titel: {name1} {res}-💜.mkv\n\n📥 Upload By♠:\n{CR}**'
+                cc1 = f'**[{str(count).zfill(3)}.]📝Titel: {name1}-💜.pdf\n\n📥 Upload By♠:\n{CR}**'
                     
                 
                 if "drive" in url:
@@ -1244,7 +1244,7 @@ async def txt_handler(bot: Client, m: Message):
     except Exception:
         pass
     # ─────────────────────────────────────────────────────────────────────────
-    await m.reply_text("**आज का कार्यक्रम समाप्त। ❤️\n\nअब रंग बिरंगी तितलियां भर दो\n\nदेखते है आज किसके दिल में कितनी तितलियाँ हैं...!! 🦋🦋\n\n\n💠ᴛʜᴀɴᴋ ʏᴏᴜ ꜰᴏʀ ʏᴏᴜʀ ꜱᴜᴘᴘᴏʀᴛ💠!**")
+    await m.reply_text("**आज का कार्यक्रम समाप्त। ❤️\n\nअब रंग बिरंगी तितलियां भर दो\n\nदेखते है आज किसके दिल में कितनी तितलियाँ हैं...🦋🦋🦋!!**")
 
 # Advance
 
