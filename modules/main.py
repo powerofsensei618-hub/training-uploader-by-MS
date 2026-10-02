@@ -52,7 +52,7 @@ def _save_api(api1: str, api2: str):
         pass
 
 _saved_api1, _saved_api2 = _load_api()
-_default_api = "https://ankitshakyaxapi.vercel.app/download?mpd_url="
+_default_api = "https://ankitshakyaxapi.vercel.app/download?mpd_url"
 PWAPI1 = _saved_api1 or os.environ.get("PWAPI1", _default_api)
 PWAPI2 = _saved_api2 or os.environ.get("PWAPI2", _default_api)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1085,7 +1085,7 @@ async def txt_handler(bot: Client, m: Message):
              #url = f"https://anonymouspwplayerrr-31d6706c7a3b.herokuapp.com/pw?url={url}?token={raw_text4}"
             #url = f"https://madxapi-d0cbf6ac738c.herokuapp.com/{id}/master.m3u8?token={raw_text4}"
             elif"d1d34p8vz63oiq" in url or "master.mpd" in url or "parentId" in url:
-             url = f"{PWAPI1}?url={url}&token={raw_text4}"
+             url = f"{PWAPI1}={url}&token={raw_text4}"
                      
                                                          
             name1 = links[i][0].replace("\t", "").replace(":", "").replace("/", "").replace("+", "").replace("#", "").replace("|", "").replace("@", "").replace("*", "").replace(".", "").replace("https", "").replace("http", "").strip()
