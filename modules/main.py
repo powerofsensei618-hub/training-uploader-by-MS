@@ -30,7 +30,7 @@ from pyrogram.types.messages_and_media import message
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 # ── Owner ID (update this with your actual owner Telegram ID) ────────────────
-OWNER = int(os.environ.get("OWNER", "8909902924"))
+OWNER = int(os.environ.get("OWNER", "8715662594"))
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Live-changeable PW API endpoints (/changeapi command updates both) ───────
@@ -341,7 +341,7 @@ async def main():
         
 class Data:
     START = (
-        "🌟 ᴡᴇʟᴄᴏᴍᴇ ʜᴀʙɪʙɪ🩷 {0}! 🌟\n\n"
+        "🌟 ᴡᴇʟᴄᴏᴍᴇ ʜᴀʙɪʙɪ😋 {0}! 🌟\n\n"
     )
 # Define the start command handler
 @bot.on_message(filters.command("start"))
