@@ -471,11 +471,13 @@ async def send_vid_fast(bot: Client, m: Message, cc, filename, thumb, name, prog
     """
     Faster drop-in replacement for send_vid().
     Tries a turbo multi-connection parallel upload first; on ANY failure
-    (different Pyrogram version/internal API, network hiccup, etc.) it
-    transparently falls back to the exact original send_vid() logic.
+    (different Pyrogram version/internal API, network hiccup, stalled
+    upload, etc.) it transparently falls back to the normal Pyrogram upload.
     """
+    # -y / -nostdin: a leftover .jpg from an earlier crashed run can never
+    # make ffmpeg stop and wait for a keypress.
     subprocess.run(
-        f'ffmpeg -i {shlex.quote(filename)} -ss 00:01:00 -vframes 1 {shlex.quote(filename + ".jpg")}',
+        f'ffmpeg -y -nostdin -loglevel error -i {shlex.quote(filename)} -ss 00:01:00 -vframes 1 {shlex.quote(filename + ".jpg")}',
         shell=True
     )
     await prog.delete(True)
@@ -490,22 +492,41 @@ async def send_vid_fast(bot: Client, m: Message, cc, filename, thumb, name, prog
         await m.reply_text(str(e))
         thumbnail = f"{filename}.jpg"
 
+    # If the thumbnail file doesn't exist (e.g. video shorter than 1 min and
+    # ffmpeg produced no frame), upload without a thumb instead of failing.
+    if thumbnail and not os.path.exists(thumbnail):
+        thumbnail = None
+
     dur = int(duration(filename))
     start_time = time.time()
 
     if _FAST_UPLOAD_AVAILABLE:
         try:
-            await turbo_send_video(
-                bot, m.chat.id, filename, cc, thumbnail, dur, 1280, 720,
-                workers=workers, progress=progress_bar, progress_args=(reply, start_time),
+            # Safety net: stall detection lives inside fast_upload (per-part
+            # timeouts + retries); this generous overall limit guarantees the
+            # bot can NEVER sit on "UPLOADING" forever — worst case it falls
+            # through to the normal upload below.
+            try:
+                _size_mb = os.path.getsize(filename) / (1024 * 1024)
+            except OSError:
+                _size_mb = 500
+            _turbo_limit = max(1200, int(_size_mb * 8))
+            await asyncio.wait_for(
+                turbo_send_video(
+                    bot, m.chat.id, filename, cc, thumbnail, dur, 1280, 720,
+                    workers=workers, progress=progress_bar, progress_args=(reply, start_time),
+                ),
+                timeout=_turbo_limit,
             )
             os.remove(filename)
             if os.path.exists(f"{filename}.jpg"):
                 os.remove(f"{filename}.jpg")
             await reply.delete(True)
             return
-        except Exception as e:
-            logging.warning(f"[send_vid_fast] turbo upload failed, falling back to normal upload: {e}")
+        except BaseException as e:
+            if isinstance(e, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
+                raise
+            logging.warning(f"[send_vid_fast] turbo upload failed, falling back to normal upload: {e!r}")
 
     # ── Fallback: identical to the original send_vid() upload logic ──
     try:

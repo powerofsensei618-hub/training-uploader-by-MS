@@ -239,8 +239,22 @@ _THUMBNAIL_FILE = ensure_thumbnail_exists()
 # ── End Thumbnail System ──────────────────────────────────────────────────────
 
 # ── Failed/Skipped download notice ───────────────────────────────────────────
-async def send_failed_notice(bot, chat_id, vid_id, title, url, reason):
-    """Send a formatted failed-download notice message."""
+async def send_failed_notice(bot, chat_id, vid_id, title, url, reason, hide=()):
+    """Send a formatted failed-download notice message.
+
+    `url` should be the ORIGINAL url from the user's txt file.
+    `hide` = private strings (e.g. the PW API base url / the edited api url)
+    that must never reach the user; they are scrubbed out of `reason`.
+    """
+    reason = str(reason)
+    for _h in hide:
+        if _h:
+            reason = reason.replace(str(_h), "")
+    reason = reason.replace("`", "'").strip()
+    if len(reason) > 300:
+        reason = reason[:300] + "..."
+    if not reason:
+        reason = "Unknown error"
     msg = (
         "**🥺ꜱᴏʀʀʏ ɪ ᴄᴀɴ'ᴛ ᴀʙʟᴇ ᴛᴏ ᴅᴏᴡɴʟᴏᴀᴅ ᴛʜɪꜱ:**\n\n"
         + "**🪩ᴠɪᴅ_ɪᴅ:** `" + str(vid_id).zfill(3) + "`\n\n"
@@ -865,6 +879,77 @@ async def thumb_back_new_callback(bot: Client, cq):
 
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ── URL EDITOR (used ONLY by /Habibi) ────────────────────────────────────────
+# Edits the url found in the txt file BEFORE the PW API is attached.
+# It never generates/wraps any player link — it only normalises the url:
+#   .../dash/<anything>/<anything>.mp4?...  ->  .../master.mpd?...
+#   .../master.mpd?...                      ->  unchanged (kept as it is)
+# plus the known proxy / host prefixes from the reference url_editor.py.
+_U_PWTHOR_PROXY   = re.compile(r"^https://proxy\.pwthor\.live/play/", re.IGNORECASE)
+_U_PWTHORCDN      = re.compile(r"^https://pwthorcdn\.b-cdn\.net/", re.IGNORECASE)
+_U_TESTWAVE       = re.compile(r"^https://cloudfront\.testwave\.cc/", re.IGNORECASE)
+_U_SUBODH         = re.compile(r"^https://stream\.subodhpgcollege\.site/play/", re.IGNORECASE)
+_U_PWTHOR_SUBODH  = re.compile(r"^https://pwthorproxy\.subodhpgcollege\.site/", re.IGNORECASE)
+_U_MS2_PROXY      = re.compile(r"^https://www\.learnxpw\.site/api/play\?url=", re.IGNORECASE)
+_U_MS4_PROXY      = re.compile(r"^https://proxy\.studywithshahid\.site/\?url=", re.IGNORECASE)
+_U_CF_HOST        = "https://d1d34p8vz63oiq.cloudfront.net/"
+
+# already a master.mpd  (the "?" is optional)
+_U_MPD_PATTERN  = re.compile(r"/master\.mpd\??", re.IGNORECASE)
+# /dash/240/9.mp4?  /dash/720/audio/2.mp4?  /dash/<x>/<y>.mp4  ...
+_U_DASH_PATTERN = re.compile(r"/dash/(?:[^/?]+/)+[^/?]+[./]mp4\??", re.IGNORECASE)
+
+
+def _u_decode_proxy(url: str, prefix_re) -> str:
+    """Proxy links of the form <proxy>?url=<percent-encoded real url>."""
+    rest = url[prefix_re.match(url).end():]
+    if re.match(r"https?%3A", rest, re.IGNORECASE):
+        rest = rest.split("&", 1)[0]
+        for _ in range(3):
+            rest = urllib.parse.unquote(rest)
+            if rest.lower().startswith(("http://", "https://")):
+                break
+    return rest
+
+
+def _u_to_master_mpd(match: re.Match) -> str:
+    return "/master.mpd?" if match.group(0).endswith("?") else "/master.mpd"
+
+
+def edit_txt_url(raw_url: str):
+    """
+    Returns the edited url, or None when the url doesn't match any known
+    shape (caller then keeps the url exactly as it was).
+    """
+    try:
+        u = raw_url.strip()
+
+        if _U_PWTHOR_PROXY.match(u):
+            u = _U_PWTHOR_PROXY.sub("https://", u)
+        if _U_MS2_PROXY.match(u):
+            u = _u_decode_proxy(u, _U_MS2_PROXY)
+        if _U_MS4_PROXY.match(u):
+            u = _u_decode_proxy(u, _U_MS4_PROXY)
+        if _U_SUBODH.match(u):
+            u = _U_SUBODH.sub("https://", u)
+        if _U_PWTHOR_SUBODH.match(u):
+            u = _U_PWTHOR_SUBODH.sub(_U_CF_HOST, u)
+        if _U_TESTWAVE.match(u):
+            u = _U_TESTWAVE.sub(_U_CF_HOST, u)
+        if _U_PWTHORCDN.match(u):
+            u = _U_PWTHORCDN.sub(_U_CF_HOST, u)
+
+        # already master.mpd -> keep as it is
+        if _U_MPD_PATTERN.search(u):
+            return u
+        # /dash/<any>/<any>.mp4?  ->  /master.mpd?
+        if _U_DASH_PATTERN.search(u):
+            return _U_DASH_PATTERN.sub(_u_to_master_mpd, u, count=1)
+        return None
+    except Exception:
+        return None
+# ─────────────────────────────────────────────────────────────────────────────
+
 @bot.on_message(filters.command(["Habibi"]) )
 async def txt_handler(bot: Client, m: Message):
     # ── Auth Check ────────────────────────────────────────────────────────────
@@ -1057,6 +1142,16 @@ async def txt_handler(bot: Client, m: Message):
                 url = _url_part.strip()
                 per_video_thumb_url = _thumb_part.strip()
             # ─────────────────────────────────────────────────────────────────
+
+            # ── Original url exactly as it is in the txt file (this is the ONLY
+            # url ever shown to the user in the "can't download" notice) ──────
+            orig_txt_url = url.strip()
+
+            # ── URL edit: /dash/<any>/<any>.mp4? -> /master.mpd?  (before API) ─
+            _edited_url = edit_txt_url(url)
+            if _edited_url:
+                url = _edited_url
+            # ─────────────────────────────────────────────────────────────────
             if "visionias" in url:
                 async with ClientSession() as session:
                     async with session.get(url, headers={'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9', 'Accept-Language': 'en-US,en;q=0.9', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'Pragma': 'no-cache', 'Referer': 'http://www.visionias.in/', 'Sec-Fetch-Dest': 'iframe', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Site': 'cross-site', 'Upgrade-Insecure-Requests': '1', 'User-Agent': 'Mozilla/5.0 (Linux; Android 12; RMX2121) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Mobile Safari/537.36', 'sec-ch-ua': '"Chromium";v="107", "Not=A?Brand";v="24"', 'sec-ch-ua-mobile': '?1', 'sec-ch-ua-platform': '"Android"',}) as resp:
@@ -1233,7 +1328,10 @@ async def txt_handler(bot: Client, m: Message):
                     time.sleep(1)
 
             except Exception as e:
-                await send_failed_notice(bot, m.chat.id, count, name, url, str(e))
+                await send_failed_notice(
+                    bot, m.chat.id, count, name, orig_txt_url, str(e),
+                    hide=(url, PWAPI1, PWAPI2),
+                )
                 continue
 
     except Exception as e:
